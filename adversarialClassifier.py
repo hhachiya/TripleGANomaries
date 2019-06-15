@@ -816,6 +816,11 @@ while not isStop:
 			_, lossR_value, lossRAll_value, decoderR_train_value, encoderR_train_value = sess.run(
 									[trainerRAll, lossR, lossRAll, decoderR_train, encoderR_train],
 									feed_dict={xTrain: batch_x, xTrainNoise: batch_x_noise})
+		else:
+			# training R network with batch_x & batch_x_noise
+			lossR_value, lossRAll_value, decoderR_train_value, encoderR_train_value = sess.run(
+									[lossR, lossRAll, decoderR_train, encoderR_train],
+									feed_dict={xTrain: batch_x, xTrainNoise: batch_x_noise})
 
 		# 勾配を用いてノイズを作成
 		batch_z_noise = np.zeros([batchSize, imgSize, imgSize,channelSize*8])
