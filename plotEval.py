@@ -41,11 +41,12 @@ elif trainMode == TRIPLE:
 	isRandMag = int(sys.argv[6])
 
 # trial numbers
-trialNos = [0,1,2]
+#trialNos = [0,1,2]
+trialNos = [0,1]
 
 # Iteration
 nIte = 10000
-resInd = int((nIte-1)/5000)
+resInd = int((nIte-1)/2000)
 #-------------
 
 #-------------

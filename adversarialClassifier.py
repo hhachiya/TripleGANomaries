@@ -16,7 +16,7 @@ from UCSDpedData import Data
 
 # バッチデータ数
 #keepProbTrain = 0.8
-keepProbTrain = 0.8 
+keepProbTrain = 0.5
 
 #######################
 # パラメータの設定
@@ -36,7 +36,7 @@ dataMode = MNIST
 
 if dataMode == MNIST:
 	imgSize = 28
-	channelSize = 16
+	channelSize =16 
 	batchSize = 300
 elif dataMode == UCSD2:
 	imgSize = 45
@@ -58,7 +58,7 @@ augRatio = 1
 stopTrainThre = 0.01
 
 # Rの二乗誤差の重み係数
-alpha = 0.2
+alpha = 0.0
 
 # lossAのCNetの重み係数
 beta = 1.0
@@ -74,14 +74,13 @@ if len(sys.argv) > 2:
 	targetChar = int(sys.argv[2])
 	trialNo = int(sys.argv[3])
 	noiseSigma = float(sys.argv[4])
-	z_dim_R = int(sys.argv[5])
+	channelSize = int(sys.argv[5])	
 	nIte = int(sys.argv[6])
 
 else:
 	targetChar = 0
 	trialNo = 0	
 	noiseSigma = 40
-	z_dim_R = 2
 	nIte = 5000
 
 if len(sys.argv) > 7:
@@ -121,7 +120,7 @@ threLossR = 50
 threLossD = -10e-8
 
 # 変数をまとめたディクショナリ
-params = {'z_dim_R':z_dim_R, 'testAbnormalRatios':testAbnormalRatios, 'labmdaR':alpha,
+params = {'testAbnormalRatios':testAbnormalRatios, 'labmdaR':alpha,
 'threAbnormal':threAbnormal, 'targetChar':targetChar,'batchSize':batchSize}
 
 # プロットする画像数
@@ -134,11 +133,11 @@ if trainMode == ALOCC:
 	else:
 		trainModeStr = 'ALOCC_DNet'	
 		
-	postFix = "_{}_{}_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo, z_dim_R, noiseSigma, stopTrainThre)
+	postFix = "_{}_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo,  noiseSigma, stopTrainThre)
 
 elif trainMode == GAN:
 	trainModeStr = 'GAN'
-	postFix = "_{}_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo, z_dim_R, noiseSigma)
+	postFix = "_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo, noiseSigma)
 	
 elif trainMode == TRIPLE:
 	if isRandMag:
@@ -146,7 +145,7 @@ elif trainMode == TRIPLE:
 	else:
 		trainModeStr = 'TRIPLE'
 
-	postFix = "_{}_{}_{}_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo, z_dim_R, noiseSigma, stopTrainThre, beta)
+	postFix = "_{}_{}_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo, noiseSigma, stopTrainThre, beta)
 
 
 
@@ -304,7 +303,7 @@ def fc_sigmoid(inputs, w, b, keepProb=1.0):
 # エンコーダ
 # 画像をz_dim次元のベクトルにエンコード
 # reuse=Trueで再利用できる（tf.variable_scope() は，変数の管理に用いるスコープ定義）
-def encoderR(x, z_dim, reuse=False, keepProb = 1.0, training=False):
+def encoderR(x, reuse=False, keepProb = 1.0, training=False):
 	with tf.variable_scope('encoderR') as scope:
 		if reuse:
 			scope.reuse_variables()
@@ -313,56 +312,56 @@ def encoderR(x, z_dim, reuse=False, keepProb = 1.0, training=False):
 		# imgSize/2 = 14
 		convW1 = weight_variable("convW1", [3, 3, 1, channelSize])
 		convB1 = bias_variable("convB1", [channelSize])
-		conv1 = conv2d_relu(x, convW1, convB1, stride=[1,2,2,1])
+		conv1 = conv2d_relu(x, convW1, convB1, stride=[1,1,1,1])
 		conv1 = batch_norm(conv1, training)
 		
 		# 14/2 = 7
-		convW2 = weight_variable("convW2", [3, 3, channelSize, channelSize*4])
-		convB2 = bias_variable("convB2", [channelSize*4])
-		conv2 = conv2d_relu(conv1, convW2, convB2, stride=[1,2,2,1])
+		#convW2 = weight_variable("convW2", [3, 3, channelSize, channelSize*4])
+		#convB2 = bias_variable("convB2", [channelSize*4])
+		convW2 = weight_variable("convW2", [3, 3, channelSize, channelSize*2])
+		convB2 = bias_variable("convB2", [channelSize*2])
+		conv2 = conv2d_relu(conv1, convW2, convB2, stride=[1,1,1,1])
 		conv2 = batch_norm(conv2, training)
 
 		# 14/2 = 7
-		convW3 = weight_variable("convW3", [3, 3, channelSize*4, channelSize*4*4])
-		convB3 = bias_variable("convB3", [channelSize*4*4])
-		conv3 = conv2d_relu(conv2, convW3, convB3, stride=[1,2,2,1])
+		#convW3 = weight_variable("convW3", [3, 3, channelSize*4, channelSize*4*4])
+		#convB3 = bias_variable("convB3", [channelSize*4*4])
+		convW3 = weight_variable("convW3", [3, 3, channelSize*2, channelSize*4])
+		convB3 = bias_variable("convB3", [channelSize*4])
+		conv3 = conv2d_relu(conv2, convW3, convB3, stride=[1,1,1,1])
 		conv3 = batch_norm(conv3, training)
 
+		#
+		convW4 = weight_variable("convW4", [3, 3, channelSize*4, channelSize*8])
+		convB4 = bias_variable("convB4", [channelSize*8])
+		conv4 = conv2d_relu(conv3, convW4, convB4, stride=[1,1,1,1])
+		conv4 = batch_norm(conv4, training)
+
+
+		'''
 		#=======================
 		# 特徴マップをembeddingベクトルに変換
 		# 2次元画像を１次元に変更して全結合層へ渡す
 		# np.prod で配列要素の積を算出
-		conv3shape = conv3.get_shape().as_list()
-		conv3size = np.prod(conv3shape[1:])
-		conv3 = tf.reshape(conv3, [-1, conv3size])
+		conv4shape = conv4.get_shape().as_list()
+		conv4size = np.prod(conv4shape[1:])
+		conv4 = tf.reshape(conv4, [-1, conv4size])
 	
-		# 7 x 7 x 32 -> z-dim*2
-		fcW1 = weight_variable("fcW1", [conv3size, z_dim])
+		# 7 x 7 x 42 -> z-dim*2
+		fcW1 = weight_variable("fcW1", [conv4size, z_dim])
 		fcB1 = bias_variable("fcB1", [z_dim])
-		fc1 = fc_relu(conv3, fcW1, fcB1, keepProb)
-		'''	
-		# 7 x 7 x 32 -> z-dim*2
-		fcW1 = weight_variable("fcW1", [conv3size, z_dim*2])
-		fcB1 = bias_variable("fcB1", [z_dim*2])
-		fc1 = fc_relu(conv3, fcW1, fcB1, keepProb)
-
-	
-		# z-dim*2 -> z-dim
-		fcW2 = weight_variable("fcW2", [z_dim*2, z_dim])
-		fcB2 = bias_variable("fcB2", [z_dim])
-		#fc2 = fc_relu(fc1, fcW2, fcB2, keepProb)
-		fc2 = fc(fc1, fcW2, fcB2, keepProb)
+		fc1 = fc(conv4, fcW1, fcB1, keepProb)
 		'''
-		#=======================
 
-		return fc1, conv3shape
+		return conv4
+
 #######################
 
 #######################
 # デコーダ
 # z_dim次元の画像にデコード
 # reuse=Trueで再利用できる（tf.variable_scope() は，変数の管理に用いるスコープ定義）
-def decoderR(z,z_dim,convshape,reuse=False, keepProb = 1.0, training=False):
+def decoderR(z, reuse=False, keepProb = 1.0, training=False):
 	with tf.variable_scope('decoderR') as scope:
 		if reuse:
 			scope.reuse_variables()
@@ -380,30 +379,44 @@ def decoderR(z,z_dim,convshape,reuse=False, keepProb = 1.0, training=False):
 		fcB2 = bias_variable("fcB2", [convshape[1]*convshape[2]*channelSize*4*4])
 		fc2 = fc_relu(fc1, fcW2, fcB2, keepProb)
 		'''
-		fcW2 = weight_variable("fcW2", [z_dim, convshape[1]*convshape[2]*channelSize*4*4])
-		fcB2 = bias_variable("fcB2", [convshape[1]*convshape[2]*channelSize*4*4])
+		'''
+		#fcW2 = weight_variable("fcW2", [z_dim, convshape[1]*convshape[2]*channelSize*4*4])
+		#fcB2 = bias_variable("fcB2", [convshape[1]*convshape[2]*channelSize*4*4])
+		fcW2 = weight_variable("fcW2", [z_dim, convshape[1]*convshape[2]*channelSize*4])
+		fcB2 = bias_variable("fcB2", [convshape[1]*convshape[2]*channelSize*4])
 		fc2 = fc_relu(z, fcW2, fcB2, keepProb)
 
 		batchSize = tf.shape(fc2)[0]
-		fc2 = tf.reshape(fc2, tf.stack([batchSize, convshape[1], convshape[2], channelSize*4*4]))
+		#fc2 = tf.reshape(fc2, tf.stack([batchSize, convshape[1], convshape[2], channelSize*4*4]))
+		fc2 = tf.reshape(fc2, tf.stack([batchSize, convshape[1], convshape[2], channelSize*4]))
+		'''
 		#=======================
 		
 		# padding='SAME'のとき、出力のサイズO = 入力サイズI/ストライドS
 		# 7 x 2 = 14
-		convW1 = weight_variable("convW1", [3, 3, channelSize*4, channelSize*4*4])
+		#convW1 = weight_variable("convW1", [3, 3, channelSize*4, channelSize*4*4])
+		#convB1 = bias_variable("convB1", [channelSize*4])
+		batchSize = tf.shape(z)[0]
+		convW1 = weight_variable("convW1", [3, 3, channelSize*4, channelSize*8])
 		convB1 = bias_variable("convB1", [channelSize*4])
-		conv1 = conv2d_t_relu(fc2, convW1, convB1, output_shape=[batchSize,int(np.ceil(imgSize/4)),int(np.ceil(imgSize/4)),channelSize*4], stride=[1,2,2,1])
+		conv1 = conv2d_t_relu(z, convW1, convB1, output_shape=[batchSize,imgSize,imgSize,channelSize*4], stride=[1,1,1,1])
 		conv1 = batch_norm(conv1, training)
 		
 		# 14 x 2 = imgSize
-		convW2 = weight_variable("convW2", [3, 3, channelSize, channelSize*4])
-		convB2 = bias_variable("convB2", [channelSize])
-		conv2 = conv2d_t(conv1, convW2, convB2, output_shape=[batchSize,int(np.ceil(imgSize/2)),int(np.ceil(imgSize/2)),channelSize], stride=[1,2,2,1])
+		convW2 = weight_variable("convW2", [3, 3, channelSize*2, channelSize*4])
+		convB2 = bias_variable("convB2", [channelSize*2])
+		conv2 = conv2d_t(conv1, convW2, convB2, output_shape=[batchSize,imgSize,imgSize,channelSize*2], stride=[1,1,1,1])
 		conv2 = batch_norm(conv2, training)
 
-		convW3 = weight_variable("convW3", [3, 3, 1, channelSize])
-		convB3 = bias_variable("convB3", [1])
-		output = conv2d_t(conv2, convW3, convB3, output_shape=[batchSize,imgSize,imgSize,1], stride=[1,2,2,1])
+		# 14 x 2 = imgSize
+		convW3 = weight_variable("convW3", [3, 3, channelSize, channelSize*2])
+		convB3 = bias_variable("convB3", [channelSize])
+		conv3 = conv2d_t(conv2, convW3, convB3, output_shape=[batchSize,imgSize,imgSize,channelSize], stride=[1,1,1,1])
+		conv3 = batch_norm(conv3, training)
+
+		convW4 = weight_variable("convW4", [3, 3, 1, channelSize])
+		convB4 = bias_variable("convB4", [1])
+		output = conv2d_t(conv3, convW4, convB4, output_shape=[batchSize,imgSize,imgSize,1], stride=[1,1,1,1])
 
 		if dataMode == MNIST:
 			#output = tf.nn.sigmoid(output)
@@ -425,40 +438,42 @@ def DNet(x, out_dim=1, reuse=False, keepProb=1.0, training=False):
 	
 		# padding='SAME'のとき、出力のサイズO = 入力サイズI/ストライドS
 		# imgSize/2 = 14
-		convW1 = weight_variable("convW1", [3, 3, 1, 4])
-		convB1 = bias_variable("convB1", [4])
-
+		convW1 = weight_variable("convW1", [3, 3, 1, channelSize])
+		convB1 = bias_variable("convB1", [channelSize])
 		conv1 = conv2d_relu(x, convW1, convB1, stride=[1,2,2,1])
 		conv1 = batch_norm(conv1, training)
 		
 		# 14/2 = 7
-		convW2 = weight_variable("convW2", [3, 3, 4, 16])
-		convB2 = bias_variable("convB2", [16])
-		
+		convW2 = weight_variable("convW2", [3, 3, channelSize, channelSize*2])
+		convB2 = bias_variable("convB2", [channelSize*2])
 		conv2 = conv2d_relu(conv1, convW2, convB2, stride=[1,2,2,1])
 		conv2 = batch_norm(conv2, training) 
+
+		convW3 = weight_variable("convW3", [3, 3, channelSize*2, channelSize*4])
+		convB3 = bias_variable("convB3", [channelSize*4])
+		conv3 = conv2d_relu(conv2, convW3, convB3, stride=[1,2,2,1])
+		conv3 = batch_norm(conv3, training) 
+
+		convW4 = weight_variable("convW4", [3, 3, channelSize*4, channelSize*8])
+		convB4 = bias_variable("convB4", [channelSize*8])
+		conv4 = conv2d_relu(conv3, convW4, convB4, stride=[1,2,2,1])
+		conv4 = batch_norm(conv4, training) 
 
 		#=======================
 		# 特徴マップをembeddingベクトルに変換
 		# 2次元画像を１次元に変更して全結合層へ渡す
 		# np.prod で配列要素の積を算出
-		conv2size = np.prod(conv2.get_shape().as_list()[1:])
-		conv2 = tf.reshape(conv2, [-1, conv2size])
-		
-		# 7 x 7 x 16 -> 128
-		hidden_dim = 128
-		fcW1 = weight_variable("fcW1", [conv2size, hidden_dim])
-		fcB1 = bias_variable("fcB1", [hidden_dim])
-		fc1 = fc_relu(conv2, fcW1, fcB1, keepProb)
-
-		# 100 -> out_dim
-		fcW2 = weight_variable("fcW2", [hidden_dim, out_dim])
-		fcB2 = bias_variable("fcB2", [out_dim])
-		fc2 = fc(fc1, fcW2, fcB2, keepProb)
-		fc2_sigmoid = tf.nn.sigmoid(fc2)
+		conv4size = np.prod(conv4.get_shape().as_list()[1:])
+		conv4 = tf.reshape(conv4, [-1, conv4size])
+	
+		fcW1 = weight_variable("fcW1", [conv4size, 1])
+		fcB1 = bias_variable("fcB1", [1])
+		fc1 = fc(conv4, fcW1, fcB1, keepProb)
+		fc1_sigmoid = tf.nn.sigmoid(fc1)
 		#=======================
 
-		return fc2, fc2_sigmoid
+		return fc1, fc1_sigmoid
+
 #######################
 
 #######################
@@ -472,42 +487,41 @@ def CNet(x, out_dim=1, reuse=False, keepProb=1.0, training=False):
 	
 		# padding='SAME'のとき、出力のサイズO = 入力サイズI/ストライドS
 		# imgSize/2 = 14
-		#convW1 = weight_variable("convW1", [3, 3, 1, 32])
-		convW1 = weight_variable("convW1", [3, 3, 1, 4])
-		convB1 = bias_variable("convB1", [4])
-
+		convW1 = weight_variable("convW1", [3, 3, 1, channelSize])
+		convB1 = bias_variable("convB1", [channelSize])
 		conv1 = conv2d_relu(x, convW1, convB1, stride=[1,2,2,1])
 		conv1 = batch_norm(conv1, training)
 		
 		# 14/2 = 7
-		#convW2 = weight_variable("convW2", [3, 3, 32, 32])
-		convW2 = weight_variable("convW2", [3, 3, 4, 16])
-		convB2 = bias_variable("convB2", [16])
-		
+		convW2 = weight_variable("convW2", [3, 3, channelSize, channelSize*2])
+		convB2 = bias_variable("convB2", [channelSize*2])
 		conv2 = conv2d_relu(conv1, convW2, convB2, stride=[1,2,2,1])
-		conv2 = batch_norm(conv2, training)
+		conv2 = batch_norm(conv2, training) 
+
+		convW3 = weight_variable("convW3", [3, 3, channelSize*2, channelSize*4])
+		convB3 = bias_variable("convB3", [channelSize*4])
+		conv3 = conv2d_relu(conv2, convW3, convB3, stride=[1,2,2,1])
+		conv3 = batch_norm(conv3, training) 
+
+		convW4 = weight_variable("convW4", [3, 3, channelSize*4, channelSize*8])
+		convB4 = bias_variable("convB4", [channelSize*8])
+		conv4 = conv2d_relu(conv3, convW4, convB4, stride=[1,2,2,1])
+		conv4 = batch_norm(conv4, training) 
 
 		#=======================
 		# 特徴マップをembeddingベクトルに変換
 		# 2次元画像を１次元に変更して全結合層へ渡す
 		# np.prod で配列要素の積を算出
-		conv2size = np.prod(conv2.get_shape().as_list()[1:])
-		conv2 = tf.reshape(conv2, [-1, conv2size])
-		
-		# 7 x 7 x 16 -> 128
-		hidden_dim = 128
-		fcW1 = weight_variable("fcW1", [conv2size, hidden_dim])
-		fcB1 = bias_variable("fcB1", [hidden_dim])
-		fc1 = fc_relu(conv2, fcW1, fcB1, keepProb)
-
-		# 100 -> out_dim
-		fcW2 = weight_variable("fcW2", [hidden_dim, out_dim])
-		fcB2 = bias_variable("fcB2", [out_dim])
-		fc2 = fc(fc1, fcW2, fcB2, keepProb)
-		fc2_sigmoid = tf.nn.sigmoid(fc2)
+		conv4size = np.prod(conv4.get_shape().as_list()[1:])
+		conv4 = tf.reshape(conv4, [-1, conv4size])
+	
+		fcW1 = weight_variable("fcW1", [conv4size, 1])
+		fcB1 = bias_variable("fcB1", [1])
+		fc1 = fc(conv4, fcW1, fcB1, keepProb)
+		fc1_sigmoid = tf.nn.sigmoid(fc1)
 		#=======================
 
-		return fc2, fc2_sigmoid
+		return fc1, fc1_sigmoid
 #######################
 
 #######################
@@ -516,21 +530,21 @@ xTrain = tf.placeholder(tf.float32, shape=[None, imgSize, imgSize, 1])
 xTrainNoise = tf.placeholder(tf.float32, shape=[None, imgSize, imgSize, 1])
 xTest = tf.placeholder(tf.float32, shape=[None, imgSize, imgSize, 1])
 xTestNoise = tf.placeholder(tf.float32, shape=[None, imgSize, imgSize, 1])
-zTrainNoise = tf.placeholder(tf.float32, shape=[None, z_dim_R])
+zTrainNoise = tf.placeholder(tf.float32, shape=[None, imgSize, imgSize, channelSize*8])
 
 
 # 学習用
-encoderR_train, convshape = encoderR(xTrainNoise, z_dim_R, keepProb=keepProbTrain, training=True)
-decoderR_train = decoderR(encoderR_train, z_dim_R, convshape, keepProb=keepProbTrain, training=True)
+encoderR_train = encoderR(xTrainNoise, keepProb=keepProbTrain, training=True)
+decoderR_train = decoderR(encoderR_train, keepProb=keepProbTrain, training=True)
 
 # ノイズの付加
 encoderR_train_abnormal = encoderR_train + beta*zTrainNoise
 
-decoderR_train_abnormal = decoderR(encoderR_train_abnormal, z_dim_R, convshape, reuse=True, keepProb=1.0, training=False)
+decoderR_train_abnormal = decoderR(encoderR_train_abnormal, reuse=True, keepProb=1.0, training=False)
 
 # テスト用
-encoderR_test, convshape = encoderR(xTestNoise, z_dim_R, reuse=True, keepProb=1.0)
-decoderR_test = decoderR(encoderR_test, z_dim_R, convshape, reuse=True, keepProb=1.0)
+encoderR_test = encoderR(xTestNoise, reuse=True, keepProb=1.0)
+decoderR_test = decoderR(encoderR_test,reuse=True, keepProb=1.0)
 #######################
 
 #######################
@@ -538,10 +552,7 @@ decoderR_test = decoderR(encoderR_test, z_dim_R, convshape, reuse=True, keepProb
 
 _, predictFake_train  = DNet(decoderR_train, keepProb=keepProbTrain, training=True)
 _, predictTrue_train = DNet(xTrain,reuse=True, keepProb=keepProbTrain, training=True)
-
-
 _, predictNormal_train = CNet(xTrain, keepProb=keepProbTrain, training=True)
-
 _, predictAbnormal_train = CNet(decoderR_train_abnormal, reuse=True, keepProb=keepProbTrain, training=True)
 #######################
 
@@ -555,7 +566,7 @@ lossR = tf.reduce_mean(tf.square(decoderR_train - xTrain))
 #lossRAll = -tf.reduce_mean(tf.log(1 - predictFake_train + lambdaSmall)) + alpha * lossR
 #lossRAll = tf.reduce_mean(tf.log(1 - predictFake_train + lambdaSmall)) + alpha * lossR
 #lossRAll = -tf.reduce_mean(tf.log(predictFake_train + lambdaSmall)) + alpha * lossR
-lossRAll = -tf.reduce_mean(tf.log(predictFake_train)) + alpha * lossR
+lossRAll = -tf.reduce_mean(tf.log(predictFake_train + lambdaSmall)) + alpha * lossR
 #====================
 
 #====================
@@ -807,14 +818,15 @@ while not isStop:
 									feed_dict={xTrain: batch_x, xTrainNoise: batch_x_noise})
 
 		# 勾配を用いてノイズを作成
-		batch_z_noise = np.zeros([batchSize, z_dim_R])
+		batch_z_noise = np.zeros([batchSize, imgSize, imgSize,channelSize*8])
 		encoderR_train_grad_value = sess.run(encoderR_train_grad, feed_dict={xTrain: batch_x, xTrainNoise: batch_x_noise, zTrainNoise: batch_z_noise})
 
 		batch_z_noise = -encoderR_train_grad_value[0]
-		batch_z_noise = batch_z_noise/np.tile(np.max(np.abs(batch_z_noise+lambdaSmall),axis=1,keepdims=True),[1,z_dim_R])
+		batch_z_noise = batch_z_noise/np.tile(np.max(np.max(np.abs(batch_z_noise+lambdaSmall),axis=1,keepdims=True),axis=2,keepdims=True),[1,imgSize,imgSize,1])
 
-		if isRandMag:
-			batch_z_noise = batch_z_noise * np.tile(np.random.random([batchSize,1]),[1,z_dim_R])
+
+		#if isRandMag:
+		#	batch_z_noise = batch_z_noise * np.tile(np.random.random([batchSize,1]),[1,z_dim_R])
 
 		# training C network 
 		_, lossC_value, predictAbnormal_train_value, predictNormal_train_value, decoderR_train_abnormal_value = sess.run(
@@ -1105,63 +1117,6 @@ while not isStop:
 				plotImg(test_x[:nPlotImg], decoderR_test_value[ind][:nPlotImg],path)
 				#--------------------------
 		
-			#--------------------------
-			# Visualizing embedded space z
-			if isVisualize & (z_dim_R == 2):
-				plt.close()
-
-				#---------------
-				# train data
-
-				# get z samples for true 
-				encoderR_train_value, encoderR_train_abnormal_value = sess.run([encoderR_train,encoderR_train_abnormal], feed_dict={xTrain: batch_x, xTrainNoise:batch_x_noise})
-				# plot example of embedded vectors, z
-				plt.plot(encoderR_train_value[:,0],encoderR_train_value[:,1],'o',markersize=6,markeredgecolor="b",markerfacecolor="w")
-				plt.plot(encoderR_train_value[:,0],encoderR_train_value[:,1],'d',markersize=6,markeredgecolor="g",markerfacecolor="w")
-
-				if trainMode == TRIPLE:
-					plt.plot(encoderR_train_abnormal_value[:,0],encoderR_train_abnormal_value[:,1],'rd',markersize=6)
-
-					plt.xlim(int(np.min([np.min(encoderR_train_abnormal_value[:,0]), np.min(encoderR_train_value[:,0]),np.min(encoderR_train_value[:,0])]) - 100),
-						int(np.max([np.max(encoderR_train_abnormal_value[:,0]), np.max(encoderR_train_value[:,0]),np.max(encoderR_train_value[:,0])]) + 100) )
-
-					plt.ylim(int(np.min([np.min(encoderR_train_abnormal_value[:,1]), np.min(encoderR_train_value[:,1]),np.min(encoderR_train_value[:,1])]) - 100),
-						int(np.max([np.max(encoderR_train_abnormal_value[:,1]), np.max(encoderR_train_value[:,1]),np.max(encoderR_train_value[:,1])]) + 100) )
-
-				else:
-					plt.xlim(int(np.min([np.min(encoderR_train_value[:,0]),np.min(encoderR_train_value[:,0])]) - 100),
-						int(np.max([np.max(encoderR_train_value[:,0]),np.max(encoderR_train_value[:,0])]) + 100) )
-
-					plt.ylim(int(np.min([np.min(encoderR_train_value[:,1]),np.min(encoderR_train_value[:,1])]) - 100),
-						int(np.max([np.max(encoderR_train_value[:,1]),np.max(encoderR_train_value[:,1])]) + 100) )
-
-
-				plt.savefig(visualPath+"z.eps")
-				#---------------
-
-				#---------------
-				# test data
-
-				# plot example of embedded vectors, z
-				plt.plot(encoderR_test_value[ind][:normalNum,0],encoderR_test_value[ind][:normalNum,1],'o',markersize=3,markeredgecolor="g",markerfacecolor="None")
-				plt.plot(encoderR_test_value[ind][normalNum:,0],encoderR_test_value[ind][normalNum:,1],'o',markersize=3,markeredgecolor="r",markerfacecolor="None")
-				
-				if trainMode == TRIPLE:
-					plt.plot(encoderR_train_abnormal_value[:,0],encoderR_train_abnormal_value[:,1],'.',markersize=2,markeredgecolor="m",markerfacecolor="None")
-					plt.xlim(int(np.min([np.min(encoderR_train_abnormal_value[:,0]), np.min(encoderR_test_value[ind][:,0]),np.min(encoderR_test_value[ind][:,0])]) - 100),
-						int(np.max([np.max(encoderR_train_abnormal_value[:,0]), np.max(encoderR_test_value[ind][:,0]),np.max(encoderR_test_value[ind][:,0])]) + 100) )
-
-					plt.ylim(int(np.min([np.min(encoderR_train_abnormal_value[:,1]), np.min(encoderR_test_value[ind][:,1]),np.min(encoderR_test_value[ind][:,1])]) - 100),
-						int(np.max([np.max(encoderR_train_abnormal_value[:,1]), np.max(encoderR_test_value[ind][:,1]),np.max(encoderR_test_value[ind][:,1])]) + 100) )
-
-				else:
-					plt.xlim(int(np.min([np.min(encoderR_test_value[ind][:,0]),np.min(encoderR_test_value[ind][:,0])]) - 100),
-						int(np.max([np.max(encoderR_test_value[ind][:,0]),np.max(encoderR_test_value[ind][:,0])]) + 100) )
-
-					plt.ylim(int(np.min([np.min(encoderR_test_value[ind][:,1]),np.min(encoderR_test_value[ind][:,1])]) - 100),
-						int(np.max([np.max(encoderR_test_value[ind][:,1]),np.max(encoderR_test_value[ind][:,1])]) + 100) )
-
-				plt.savefig(visualPath+"z_test_{}_{}.eps".format(ite,ind))
 			#--------------------------
 		#====================
 
