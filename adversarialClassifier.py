@@ -36,15 +36,18 @@ dataMode = MNIST
 
 if dataMode == MNIST:
 	imgSize = 28
-	channelSize =16 
+	channelSize = 32
 	batchSize = 300
+	stride = 1
 elif dataMode == UCSD2:
 	imgSize = 45
 	channelSize = 8
 	batchSize = 200
+	stride = 1
 
-evalInterval = 2000
-printInterval = 500
+mmdDataNum = 200
+evalInterval = 1000
+printInterval = 100
 
 isStop = False
 isEmbedSampling = True
@@ -58,7 +61,7 @@ augRatio = 1
 stopTrainThre = 0.01
 
 # Rの二乗誤差の重み係数
-alpha = 0.0
+alpha = 0.1
 
 # lossAのCNetの重み係数
 beta = 1.0
@@ -66,15 +69,12 @@ beta = 1.0
 # DNet stop
 isDNetStop = True
 
-# random magnitude
-isRandMag = False
-
 # trail no.
 if len(sys.argv) > 2:
 	targetChar = int(sys.argv[2])
 	trialNo = int(sys.argv[3])
 	noiseSigma = float(sys.argv[4])
-	channelSize = int(sys.argv[5])	
+	z_dim = int(sys.argv[5])	
 	nIte = int(sys.argv[6])
 
 else:
@@ -87,10 +87,8 @@ if len(sys.argv) > 7:
 	if trainMode == TRIPLE: # augment data
 		stopTrainThre = float(sys.argv[7])
 		beta = float(sys.argv[8])
-
-		if  int(sys.argv[9]) == 1:
-			isRandMag = True
-			
+		alpha = float(sys.argv[9])
+	
 
 	elif trainMode == ALOCC: # stopping Qriteria
 		stopTrainThre = float(sys.argv[7])
@@ -100,13 +98,16 @@ if len(sys.argv) > 7:
 		else:
 			isDNetStop = False
 
+		alpha = float(sys.argv[9])
+
 
 # log(0)と0割防止用
 lambdaSmall = 10e-10
 
 # テストデータにおける偽物の割合
+# -1はvalidation用
 if dataMode == MNIST:
-	testAbnormalRatios = [0.1, 0.2, 0.3, 0.4, 0.5]
+	testAbnormalRatios = [-1, 0.1, 0.2, 0.3, 0.4, 0.5]
 elif dataMode == UCSD2:
 	testAbnormalRatios = list(range(12))
 
@@ -133,20 +134,16 @@ if trainMode == ALOCC:
 	else:
 		trainModeStr = 'ALOCC_DNet'	
 		
-	postFix = "_{}_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo,  noiseSigma, stopTrainThre)
+	postFix = "_{}_{}_{}_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo,  z_dim, alpha, noiseSigma, stopTrainThre)
 
 elif trainMode == GAN:
 	trainModeStr = 'GAN'
-	postFix = "_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo, noiseSigma)
+	postFix = "_{}_{}_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo, z_dim, alpha, noiseSigma)
 	
 elif trainMode == TRIPLE:
-	if isRandMag:
-		trainModeStr = 'TRIPLE_RandMag'
-	else:
-		trainModeStr = 'TRIPLE'
+	trainModeStr = 'TRIPLE'
 
-	postFix = "_{}_{}_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo, noiseSigma, stopTrainThre, beta)
-
+	postFix = "_{}_{}_{}_{}_{}_{}_{}_{}".format(trainModeStr,targetChar, trialNo, z_dim,alpha, noiseSigma, stopTrainThre, beta)
 
 
 if dataMode == MNIST:
@@ -175,8 +172,8 @@ def calcEval(predict, gt, threAbnormal=0.5):
 	tmp_predict[predict >= threAbnormal] = 1.
 	tmp_predict[predict < threAbnormal] = 0.
 
-	recall = np.sum(predict[gt==1])/np.sum(gt==1)
-	precision = np.sum(predict[gt==1])/np.sum(predict==1)
+	recall = np.sum(tmp_predict[gt==1])/np.sum(gt==1)
+	precision = np.sum(tmp_predict[gt==1])/np.sum(tmp_predict==1)
 	f1 = 2 * (precision * recall)/(precision + recall)
 
 	return recall, precision, f1, auc, eer
@@ -297,13 +294,30 @@ def fc_sigmoid(inputs, w, b, keepProb=1.0):
 	fc = tf.nn.sigmoid(fc)
 	return fc
 
+# kernelの計算
+def compute_kernel(x, y):
+	x_size = tf.shape(x)[0]
+	y_size = tf.shape(y)[0]
+	dim = tf.shape(x)[1]
+	tiled_x = tf.tile(tf.reshape(x, tf.stack([x_size, 1, dim])), tf.stack([1, y_size, 1]))
+	tiled_y = tf.tile(tf.reshape(y, tf.stack([1, y_size, dim])), tf.stack([x_size, 1, 1]))
+	return tf.exp(-tf.reduce_mean(tf.square(tiled_x - tiled_y), axis=2) / tf.cast(dim, tf.float32))
+
+# mmdの計算
+def compute_mmd(x, y):
+	#x = tf.reshape(x,[tf.shape(x)[0],-1])
+	#y = tf.reshape(y,[tf.shape(y)[0],-1])
+	x_kernel = compute_kernel(x, x)
+	y_kernel = compute_kernel(y, y)
+	xy_kernel = compute_kernel(x, y)
+	return tf.reduce_mean(x_kernel) + tf.reduce_mean(y_kernel) - 2 * tf.reduce_mean(xy_kernel)
 #######################
 
 #######################
 # エンコーダ
 # 画像をz_dim次元のベクトルにエンコード
 # reuse=Trueで再利用できる（tf.variable_scope() は，変数の管理に用いるスコープ定義）
-def encoderR(x, reuse=False, keepProb = 1.0, training=False):
+def encoderR(x, z_dim, reuse=False, keepProb = 1.0, training=False):
 	with tf.variable_scope('encoderR') as scope:
 		if reuse:
 			scope.reuse_variables()
@@ -311,117 +325,95 @@ def encoderR(x, reuse=False, keepProb = 1.0, training=False):
 		# padding='SAME'のとき、出力のサイズO = 入力サイズI/ストライドS
 		# imgSize/2 = 14
 		convW1 = weight_variable("convW1", [3, 3, 1, channelSize])
-		convB1 = bias_variable("convB1", [channelSize])
-		conv1 = conv2d_relu(x, convW1, convB1, stride=[1,1,1,1])
+		convB1 = bias_variable("convB1", [channelSize])		
+		conv1 = conv2d_relu(x, convW1, convB1, stride=[1,stride,stride,1])
 		conv1 = batch_norm(conv1, training)
 		
 		# 14/2 = 7
-		#convW2 = weight_variable("convW2", [3, 3, channelSize, channelSize*4])
-		#convB2 = bias_variable("convB2", [channelSize*4])
-		convW2 = weight_variable("convW2", [3, 3, channelSize, channelSize*2])
-		convB2 = bias_variable("convB2", [channelSize*2])
-		conv2 = conv2d_relu(conv1, convW2, convB2, stride=[1,1,1,1])
+		convW2 = weight_variable("convW2", [3, 3, channelSize, channelSize])
+		convB2 = bias_variable("convB2", [channelSize])
+		conv2 = conv2d_relu(conv1, convW2, convB2, stride=[1,stride,stride,1])
 		conv2 = batch_norm(conv2, training)
 
-		# 14/2 = 7
-		#convW3 = weight_variable("convW3", [3, 3, channelSize*4, channelSize*4*4])
-		#convB3 = bias_variable("convB3", [channelSize*4*4])
-		convW3 = weight_variable("convW3", [3, 3, channelSize*2, channelSize*4])
-		convB3 = bias_variable("convB3", [channelSize*4])
-		conv3 = conv2d_relu(conv2, convW3, convB3, stride=[1,1,1,1])
+		# 14/2 = 4
+		convW3 = weight_variable("convW3", [3, 3, channelSize, channelSize])
+		convB3 = bias_variable("convB3", [channelSize])
+		conv3 = conv2d_relu(conv2, convW3, convB3, stride=[1,stride,stride,1])
 		conv3 = batch_norm(conv3, training)
 
-		#
-		convW4 = weight_variable("convW4", [3, 3, channelSize*4, channelSize*8])
-		convB4 = bias_variable("convB4", [channelSize*8])
-		conv4 = conv2d_relu(conv3, convW4, convB4, stride=[1,1,1,1])
-		conv4 = batch_norm(conv4, training)
-
-
 		'''
+		#
+		convW4 = weight_variable("convW4", [3, 3, channelSize, channelSize])
+		convB4 = bias_variable("convB4", [channelSize])
+		conv4 = conv2d_relu(conv3, convW4, convB4, stride=[1,stride,stride,1])
+		conv4 = batch_norm(conv4, training)
+		'''
+
 		#=======================
 		# 特徴マップをembeddingベクトルに変換
 		# 2次元画像を１次元に変更して全結合層へ渡す
 		# np.prod で配列要素の積を算出
-		conv4shape = conv4.get_shape().as_list()
-		conv4size = np.prod(conv4shape[1:])
-		conv4 = tf.reshape(conv4, [-1, conv4size])
+		conv3shape = conv3.get_shape().as_list()
+		conv3size = np.prod(conv3shape[1:])
+		conv3 = tf.reshape(conv3, [-1, conv3size])
 	
 		# 7 x 7 x 42 -> z-dim*2
-		fcW1 = weight_variable("fcW1", [conv4size, z_dim])
+		fcW1 = weight_variable("fcW1", [conv3size, z_dim])
 		fcB1 = bias_variable("fcB1", [z_dim])
-		fc1 = fc(conv4, fcW1, fcB1, keepProb)
-		'''
+		fc1 = fc(conv3, fcW1, fcB1, keepProb)
+		#=======================
 
-		return conv4
-
+		return fc1
 #######################
 
 #######################
 # デコーダ
 # z_dim次元の画像にデコード
 # reuse=Trueで再利用できる（tf.variable_scope() は，変数の管理に用いるスコープ定義）
-def decoderR(z, reuse=False, keepProb = 1.0, training=False):
+def decoderR(z, z_dim, reuse=False, keepProb = 1.0, training=False):
 	with tf.variable_scope('decoderR') as scope:
 		if reuse:
 			scope.reuse_variables()
-
 		
 		#=======================
 		# embeddingベクトルを特徴マップに変換
 		# 2次元画像を１次元に変更して全結合層へ渡す
-		'''
-		fcW1 = weight_variable("fcW1", [z_dim, z_dim*2])
-		fcB1 = bias_variable("fcB1", [z_dim*2])
+		fcW1 = weight_variable("fcW1", [z_dim, imgSize*imgSize*channelSize])
+		fcB1 = bias_variable("fcB1", [imgSize*imgSize*channelSize])
 		fc1 = fc_relu(z, fcW1, fcB1, keepProb)
 
-		fcW2 = weight_variable("fcW2", [z_dim*2, convshape[1]*convshape[2]*channelSize*4*4])
-		fcB2 = bias_variable("fcB2", [convshape[1]*convshape[2]*channelSize*4*4])
-		fc2 = fc_relu(fc1, fcW2, fcB2, keepProb)
-		'''
-		'''
-		#fcW2 = weight_variable("fcW2", [z_dim, convshape[1]*convshape[2]*channelSize*4*4])
-		#fcB2 = bias_variable("fcB2", [convshape[1]*convshape[2]*channelSize*4*4])
-		fcW2 = weight_variable("fcW2", [z_dim, convshape[1]*convshape[2]*channelSize*4])
-		fcB2 = bias_variable("fcB2", [convshape[1]*convshape[2]*channelSize*4])
-		fc2 = fc_relu(z, fcW2, fcB2, keepProb)
-
-		batchSize = tf.shape(fc2)[0]
-		#fc2 = tf.reshape(fc2, tf.stack([batchSize, convshape[1], convshape[2], channelSize*4*4]))
-		fc2 = tf.reshape(fc2, tf.stack([batchSize, convshape[1], convshape[2], channelSize*4]))
-		'''
+		batchSize = tf.shape(fc1)[0]
+		fc1 = tf.reshape(fc1, tf.stack([batchSize, imgSize, imgSize, channelSize]))
 		#=======================
 		
 		# padding='SAME'のとき、出力のサイズO = 入力サイズI/ストライドS
 		# 7 x 2 = 14
-		#convW1 = weight_variable("convW1", [3, 3, channelSize*4, channelSize*4*4])
-		#convB1 = bias_variable("convB1", [channelSize*4])
-		batchSize = tf.shape(z)[0]
-		convW1 = weight_variable("convW1", [3, 3, channelSize*4, channelSize*8])
-		convB1 = bias_variable("convB1", [channelSize*4])
-		conv1 = conv2d_t_relu(z, convW1, convB1, output_shape=[batchSize,imgSize,imgSize,channelSize*4], stride=[1,1,1,1])
+		convW1 = weight_variable("convW1", [3, 3, channelSize, channelSize])
+		convB1 = bias_variable("convB1", [channelSize])
+		conv1 = conv2d_t_relu(fc1, convW1, convB1, output_shape=[batchSize,imgSize,imgSize,channelSize], stride=[1,stride,stride,1])
 		conv1 = batch_norm(conv1, training)
 		
 		# 14 x 2 = imgSize
-		convW2 = weight_variable("convW2", [3, 3, channelSize*2, channelSize*4])
-		convB2 = bias_variable("convB2", [channelSize*2])
-		conv2 = conv2d_t(conv1, convW2, convB2, output_shape=[batchSize,imgSize,imgSize,channelSize*2], stride=[1,1,1,1])
+		convW2 = weight_variable("convW2", [3, 3, channelSize, channelSize])
+		convB2 = bias_variable("convB2", [channelSize])
+		conv2 = conv2d_t(conv1, convW2, convB2, output_shape=[batchSize,imgSize,imgSize,channelSize], stride=[1,stride,stride,1])
 		conv2 = batch_norm(conv2, training)
 
 		# 14 x 2 = imgSize
-		convW3 = weight_variable("convW3", [3, 3, channelSize, channelSize*2])
-		convB3 = bias_variable("convB3", [channelSize])
-		conv3 = conv2d_t(conv2, convW3, convB3, output_shape=[batchSize,imgSize,imgSize,channelSize], stride=[1,1,1,1])
-		conv3 = batch_norm(conv3, training)
-
+		convW3 = weight_variable("convW3", [3, 3, 1, channelSize])
+		convB3 = bias_variable("convB3", [1])
+		output = conv2d_t(conv2, convW3, convB3, output_shape=[batchSize,imgSize,imgSize,1], stride=[1,stride,stride,1])
+		
+		'''
 		convW4 = weight_variable("convW4", [3, 3, 1, channelSize])
 		convB4 = bias_variable("convB4", [1])
-		output = conv2d_t(conv3, convW4, convB4, output_shape=[batchSize,imgSize,imgSize,1], stride=[1,1,1,1])
+		output = conv2d_t(conv3, convW4, convB4, output_shape=[batchSize,imgSize,imgSize,1], stride=[1,stride,stride,1])
+		'''		
 
 		if dataMode == MNIST:
-			#output = tf.nn.sigmoid(output)
-			output = tf.nn.tanh(output)
-		elif dataMode == TRIPLE:
+			output = tf.nn.sigmoid(output)
+			#output = tf.nn.tanh(output)
+		elif dataMode != MNIST:
 			output = tf.nn.relu(output)
 
 		return output
@@ -449,6 +441,7 @@ def DNet(x, out_dim=1, reuse=False, keepProb=1.0, training=False):
 		conv2 = conv2d_relu(conv1, convW2, convB2, stride=[1,2,2,1])
 		conv2 = batch_norm(conv2, training) 
 
+		'''
 		convW3 = weight_variable("convW3", [3, 3, channelSize*2, channelSize*4])
 		convB3 = bias_variable("convB3", [channelSize*4])
 		conv3 = conv2d_relu(conv2, convW3, convB3, stride=[1,2,2,1])
@@ -458,17 +451,18 @@ def DNet(x, out_dim=1, reuse=False, keepProb=1.0, training=False):
 		convB4 = bias_variable("convB4", [channelSize*8])
 		conv4 = conv2d_relu(conv3, convW4, convB4, stride=[1,2,2,1])
 		conv4 = batch_norm(conv4, training) 
+		'''
 
 		#=======================
 		# 特徴マップをembeddingベクトルに変換
 		# 2次元画像を１次元に変更して全結合層へ渡す
 		# np.prod で配列要素の積を算出
-		conv4size = np.prod(conv4.get_shape().as_list()[1:])
-		conv4 = tf.reshape(conv4, [-1, conv4size])
+		conv2size = np.prod(conv2.get_shape().as_list()[1:])
+		conv2 = tf.reshape(conv2, [-1, conv2size])
 	
-		fcW1 = weight_variable("fcW1", [conv4size, 1])
+		fcW1 = weight_variable("fcW1", [conv2size, 1])
 		fcB1 = bias_variable("fcB1", [1])
-		fc1 = fc(conv4, fcW1, fcB1, keepProb)
+		fc1 = fc(conv2, fcW1, fcB1, keepProb)
 		fc1_sigmoid = tf.nn.sigmoid(fc1)
 		#=======================
 
@@ -498,6 +492,7 @@ def CNet(x, out_dim=1, reuse=False, keepProb=1.0, training=False):
 		conv2 = conv2d_relu(conv1, convW2, convB2, stride=[1,2,2,1])
 		conv2 = batch_norm(conv2, training) 
 
+		'''
 		convW3 = weight_variable("convW3", [3, 3, channelSize*2, channelSize*4])
 		convB3 = bias_variable("convB3", [channelSize*4])
 		conv3 = conv2d_relu(conv2, convW3, convB3, stride=[1,2,2,1])
@@ -507,17 +502,18 @@ def CNet(x, out_dim=1, reuse=False, keepProb=1.0, training=False):
 		convB4 = bias_variable("convB4", [channelSize*8])
 		conv4 = conv2d_relu(conv3, convW4, convB4, stride=[1,2,2,1])
 		conv4 = batch_norm(conv4, training) 
+		'''
 
 		#=======================
 		# 特徴マップをembeddingベクトルに変換
 		# 2次元画像を１次元に変更して全結合層へ渡す
 		# np.prod で配列要素の積を算出
-		conv4size = np.prod(conv4.get_shape().as_list()[1:])
-		conv4 = tf.reshape(conv4, [-1, conv4size])
+		conv2size = np.prod(conv2.get_shape().as_list()[1:])
+		conv2 = tf.reshape(conv2, [-1, conv2size])
 	
-		fcW1 = weight_variable("fcW1", [conv4size, 1])
+		fcW1 = weight_variable("fcW1", [conv2size, 1])
 		fcB1 = bias_variable("fcB1", [1])
-		fc1 = fc(conv4, fcW1, fcB1, keepProb)
+		fc1 = fc(conv2, fcW1, fcB1, keepProb)
 		fc1_sigmoid = tf.nn.sigmoid(fc1)
 		#=======================
 
@@ -529,22 +525,22 @@ def CNet(x, out_dim=1, reuse=False, keepProb=1.0, training=False):
 xTrain = tf.placeholder(tf.float32, shape=[None, imgSize, imgSize, 1])
 xTrainNoise = tf.placeholder(tf.float32, shape=[None, imgSize, imgSize, 1])
 xTest = tf.placeholder(tf.float32, shape=[None, imgSize, imgSize, 1])
-xTestNoise = tf.placeholder(tf.float32, shape=[None, imgSize, imgSize, 1])
-zTrainNoise = tf.placeholder(tf.float32, shape=[None, imgSize, imgSize, channelSize*8])
+#zTrainNoise = tf.placeholder(tf.float32, shape=[None, imgSize, imgSize, channelSize*8])
+zTrainNoise = tf.placeholder(tf.float32, shape=[None, z_dim])
 
 
 # 学習用
-encoderR_train = encoderR(xTrainNoise, keepProb=keepProbTrain, training=True)
-decoderR_train = decoderR(encoderR_train, keepProb=keepProbTrain, training=True)
+encoderR_train  = encoderR(xTrainNoise, z_dim, keepProb=keepProbTrain, training=True)
+decoderR_train = decoderR(encoderR_train, z_dim, keepProb=keepProbTrain, training=True)
 
 # ノイズの付加
-encoderR_train_abnormal = encoderR_train + beta*zTrainNoise
-
-decoderR_train_abnormal = decoderR(encoderR_train_abnormal, reuse=True, keepProb=1.0, training=False)
+#encoderR_train_abnormal = encoderR_train + beta*zTrainNoise
+encoderR_train_abnormal = beta*zTrainNoise
+decoderR_train_abnormal = decoderR(encoderR_train_abnormal, z_dim, reuse=True, keepProb=1.0, training=False)
 
 # テスト用
-encoderR_test = encoderR(xTestNoise, reuse=True, keepProb=1.0)
-decoderR_test = decoderR(encoderR_test,reuse=True, keepProb=1.0)
+encoderR_test = encoderR(xTest, z_dim, reuse=True, keepProb=1.0)
+decoderR_test = decoderR(encoderR_test,z_dim, reuse=True, keepProb=1.0)
 #######################
 
 #######################
@@ -559,21 +555,27 @@ _, predictAbnormal_train = CNet(decoderR_train_abnormal, reuse=True, keepProb=ke
 #######################
 # 損失関数の設定
 
+#===========================
+# maximum mean discrepancyの計算
+z_shape = tf.unstack(tf.shape(encoderR_train))
+z_shape[0] = mmdDataNum
+zTrain = tf.random_normal(z_shape)
+lossMMD = compute_mmd(zTrain, encoderR_train)
+#===========================
 
 #====================
 # R networks
 lossR = tf.reduce_mean(tf.square(decoderR_train - xTrain))
 #lossRAll = -tf.reduce_mean(tf.log(1 - predictFake_train + lambdaSmall)) + alpha * lossR
-#lossRAll = tf.reduce_mean(tf.log(1 - predictFake_train + lambdaSmall)) + alpha * lossR
-#lossRAll = -tf.reduce_mean(tf.log(predictFake_train + lambdaSmall)) + alpha * lossR
-lossRAll = -tf.reduce_mean(tf.log(predictFake_train + lambdaSmall)) + alpha * lossR
+lossRAll = alpha*tf.reduce_mean(tf.log(1 - predictFake_train + lambdaSmall)) + lossR
+#lossRAll = -alpha * tf.reduce_mean(tf.log(predictFake_train + lambdaSmall)) + lossR
+lossRMMD = lossRAll + lossMMD
 #====================
 
 #====================
 # D and C Networks
 lossD = -tf.reduce_mean(tf.log(predictTrue_train  + lambdaSmall)) - tf.reduce_mean(tf.log(1 - predictFake_train +  lambdaSmall))
 lossC = -tf.reduce_mean(tf.log(predictAbnormal_train + lambdaSmall)) - tf.reduce_mean(tf.log(1 - predictNormal_train + lambdaSmall)) 
-
 #====================
 #######################
 
@@ -585,6 +587,7 @@ with tf.control_dependencies(extra_update_ops):
 	Rvars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="encoderR") + tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope="decoderR")
 	trainerR = tf.train.AdamOptimizer(1e-3).minimize(lossR, var_list=Rvars)
 	trainerRAll = tf.train.AdamOptimizer(1e-3).minimize(lossRAll, var_list=Rvars)
+	trainerRMMD = tf.train.AdamOptimizer(1e-3).minimize(lossRMMD, var_list=Rvars)
 
 extra_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope="DNet")
 with tf.control_dependencies(extra_update_ops):
@@ -599,6 +602,7 @@ with tf.control_dependencies(extra_update_ops):
 
 # gradients of embeddings
 encoderR_train_grad = tf.gradients(lossC, encoderR_train)
+xTrain_lossD_grad = tf.gradients(lossD, decoderR_train)
 
 '''
 optimizer = tf.train.AdamOptimizer()
@@ -623,13 +627,16 @@ trainerC = optimizer.apply_gradients(capped_gvsC)
 
 #######################
 #テスト用
-_, predictDX = DNet(xTest,reuse=True, keepProb=1.0)
+predictDX_logit, predictDX = DNet(xTest,reuse=True, keepProb=1.0)
 _, predictDRX = DNet(decoderR_test,reuse=True, keepProb=1.0)
-_, predictCX = CNet(xTest,reuse=True, keepProb=1.0)
+predictCX_logit, predictCX = CNet(xTest,reuse=True, keepProb=1.0)
 _, predictCRX = CNet(decoderR_test,reuse=True, keepProb=1.0)
+
+# gradient for visualization
+xTest_DNet_grad = tf.gradients(predictDX_logit, xTest)
+xTest_CNet_grad = tf.gradients(predictCX_logit, xTest)
 #######################
 
-#######################
 #######################
 # メイン
 sess = tf.Session()
@@ -648,11 +655,21 @@ if dataMode == MNIST:
 	#=======================
 
 	#=======================
-	# テストデータの準備
+	# テストデータの準備	
 	normalTestInds = np.where(myData.test.labels == targetChar)[0]
-
-	# Fakeのindex
+	
+	# abnormalのindex
 	abnormalTestInds = np.setdiff1d(np.arange(len(myData.test.labels)),normalTestInds)
+
+	# 確認用データの作成
+	normalValInds = normalTestInds[-10:]
+	abnormalValInds = abnormalTestInds[-10:]
+	valNum = 20
+	val_x = np.reshape(myData.test.images[normalValInds],(len(normalValInds),imgSize,imgSize,1))
+	val_x_fake = np.reshape(myData.test.images[abnormalValInds],(len(abnormalValInds),imgSize,imgSize,1))
+	val_x = np.vstack([val_x_fake, val_x])
+	val_y = np.hstack([np.ones(len(abnormalValInds)),np.zeros(len(normalValInds))])
+	val_y_inv = np.hstack([np.zeros(len(abnormalValInds)),np.ones(len(normalValInds))])
 	#=======================
 
 elif dataMode == UCSD2:
@@ -717,7 +734,6 @@ lossD_values = []
 lossC_values = []
 #=======================
 
-
 batchInd = 0
 ite = 0
 while not isStop:
@@ -756,8 +772,8 @@ while not isStop:
 		#if ite > 1000 and (isTrain or not isDNetStop):
 		if isTrain or not isDNetStop:
 			# training D network with batch_x & batch_x_noise
-			_, lossD_value, predictFake_train_value, predictTrue_train_value = sess.run(
-									[trainerD, lossD, predictFake_train, predictTrue_train],
+			_, lossD_value, predictFake_train_value, predictTrue_train_value, xTrain_lossD_grad_value = sess.run(
+									[trainerD, lossD, predictFake_train, predictTrue_train, xTrain_lossD_grad],
 									feed_dict={xTrain: batch_x,xTrainNoise: batch_x_noise})
 		else:
 			# training D network with batch_x & batch_x_noise
@@ -801,47 +817,32 @@ while not isStop:
 	# TRIPLEの学習
 	elif (trainMode == TRIPLE):
 
-		if isTrain:
-			# training R network with batch_x & batch_x_noise
-			_, lossR_value, lossRAll_value, decoderR_train_value, encoderR_train_value = sess.run(
-									[trainerRAll, lossR, lossRAll, decoderR_train, encoderR_train],
+		# training R network with batch_x & batch_x_noise
+		_, lossR_value, lossMMD_value, lossRMMD_value, lossRAll_value, decoderR_train_value, encoderR_train_value = sess.run(
+									[trainerRMMD, lossR, lossMMD, lossRMMD, lossRAll, decoderR_train, encoderR_train],
 									feed_dict={xTrain: batch_x, xTrainNoise: batch_x_noise})
 
-			# training D network with batch_x & batch_x_noise
-			_, lossD_value, predictFake_train_value, predictTrue_train_value = sess.run(
+		# training D network with batch_x & batch_x_noise
+		_, lossD_value, predictFake_train_value, predictTrue_train_value = sess.run(
 									[trainerD, lossD, predictFake_train, predictTrue_train],
+									feed_dict={xTrain: batch_x,xTrainNoise: batch_x_noise})
+
+		# Re-training R network with batch_x & batch_x_noise
+		_, lossR_value, lossMMD_value, lossRMMD_value, lossRAll_value, decoderR_train_value, encoderR_train_value = sess.run(
+									[trainerRMMD, lossR, lossMMD, lossRMMD, lossRAll, decoderR_train, encoderR_train],
 									feed_dict={xTrain: batch_x, xTrainNoise: batch_x_noise})
 
-			# training R network with batch_x & batch_x_noise
-			_, lossR_value, lossRAll_value, decoderR_train_value, encoderR_train_value = sess.run(
-									[trainerRAll, lossR, lossRAll, decoderR_train, encoderR_train],
-									feed_dict={xTrain: batch_x, xTrainNoise: batch_x_noise})
-		else:
-			# training R network with batch_x & batch_x_noise
-			lossR_value, lossRAll_value, decoderR_train_value, encoderR_train_value = sess.run(
-									[lossR, lossRAll, decoderR_train, encoderR_train],
-									feed_dict={xTrain: batch_x, xTrainNoise: batch_x_noise})
+							
 
 		# 勾配を用いてノイズを作成
-		batch_z_noise = np.zeros([batchSize, imgSize, imgSize,channelSize*8])
-		encoderR_train_grad_value = sess.run(encoderR_train_grad, feed_dict={xTrain: batch_x, xTrainNoise: batch_x_noise, zTrainNoise: batch_z_noise})
-
-		batch_z_noise = -encoderR_train_grad_value[0]
-		batch_z_noise = batch_z_noise/np.tile(np.max(np.max(np.abs(batch_z_noise+lambdaSmall),axis=1,keepdims=True),axis=2,keepdims=True),[1,imgSize,imgSize,1])
-
-
-		#if isRandMag:
-		#	batch_z_noise = batch_z_noise * np.tile(np.random.random([batchSize,1]),[1,z_dim_R])
+		batch_z_noise = np.random.normal(size=[batchSize, z_dim])
 
 		# training C network 
 		_, lossC_value, predictAbnormal_train_value, predictNormal_train_value, decoderR_train_abnormal_value = sess.run(
 									[trainerC, lossC, predictAbnormal_train, predictNormal_train, decoderR_train_abnormal],
 									feed_dict={xTrain: batch_x, xTrainNoise: batch_x_noise, zTrainNoise: batch_z_noise})
-
-
-
 	#=======================
-
+	
 	#=======================
 	# もし誤差が下がらない場合は終了
 	if lossR_value < stopTrainThre:
@@ -865,9 +866,10 @@ while not isStop:
 		lossC_values.append(lossC_value)
 	
 
-	if ite % printInterval == 0:
+	if (ite % printInterval == 0) or (ite == 1):
 		if (trainMode == TRIPLE):
-			print("%s: #%d %d(%d), lossR=%f, lossRAll=%f, lossD=%f, lossC=%f" % (trainModeStr, ite, targetChar, trialNo, lossR_value, lossRAll_value, lossD_value, lossC_value))
+			print("%s: #%d %d(%d), lossR=%f, lossMMD=%f, lossRWMDAll=%f, lossRAll=%f, lossD=%f, lossC=%f" % 
+			(trainModeStr, ite, targetChar, trialNo, lossR_value, lossMMD_value, lossRMMD_value, lossRAll_value, lossD_value, lossC_value))
 		else:
 			print("%s: #%d %d(%d), lossR=%f, lossRAll=%f, lossD=%f" % (trainModeStr, ite, targetChar, trialNo, lossR_value, lossRAll_value, lossD_value))
 	#====================
@@ -884,18 +886,18 @@ while not isStop:
 			# plot example of true, fake, reconstructed x
 
 			plt.imshow(batch_x[0,:,:,0],cmap="gray")
-			plt.savefig(visualPath+"x_true.eps")
+			plt.savefig(visualPath+"x_true.png")
 
 			plt.imshow(batch_x_noise[0,:,:,0],cmap="gray")
-			plt.savefig(visualPath+"x_fake.eps")
+			plt.savefig(visualPath+"x_fake.png")
 		
 			plt.imshow(decoderR_train_value[0,:,:,0],cmap="gray")
-			plt.savefig(visualPath+"x_reconstructed.eps")
+			plt.savefig(visualPath+"x_reconstructed.png")
 
 			if trainMode == TRIPLE:	
 				for i in np.arange(10):
 					plt.imshow(decoderR_train_abnormal_value[i,:,:,0],cmap="gray")
-					plt.savefig(visualPath+"x_aug_{}.eps".format(i))
+					plt.savefig(visualPath+"x_aug_{}.png".format(i))
 		#====================
 		
 		#====================
@@ -921,24 +923,30 @@ while not isStop:
 		for ind, testAbnormalRatio in enumerate(testAbnormalRatios):
 
 			if dataMode == MNIST:
-				# データの数
-				abnormalNum = int(np.floor(len(normalTestInds)*testAbnormalRatio))
-				normalNum = len(normalTestInds) - abnormalNum
-				
-				# Trueのindex
-				normalTestIndsSelected = normalTestInds[:normalNum]
+				if testAbnormalRatio == -1:
+					test_x = val_x
+					test_y = val_y
+					test_y_inv = val_y_inv
 
-				# Fakeのindex
-				abnormalTestIndsSelected = abnormalTestInds[:abnormalNum]
+				else:
+					# データの数
+					abnormalNum = int(np.floor(len(normalTestInds)*testAbnormalRatio))
+					normalNum = len(normalTestInds) - abnormalNum
+					
+					# Trueのindex
+					normalTestIndsSelected = normalTestInds[:normalNum]
 
-				# reshape & concat
-				test_x = np.reshape(myData.test.images[normalTestIndsSelected],(len(normalTestIndsSelected),imgSize,imgSize,1))
-				test_x_fake = np.reshape(myData.test.images[abnormalTestIndsSelected],(len(abnormalTestIndsSelected),imgSize,imgSize,1))
-				test_x = np.vstack([test_x_fake, test_x])
+					# Fakeのindex
+					abnormalTestIndsSelected = abnormalTestInds[:abnormalNum]
 
-				# add noise
-				test_y = np.hstack([np.ones(len(abnormalTestIndsSelected)),np.zeros(len(normalTestIndsSelected))])
-				test_y_inv = np.hstack([np.zeros(len(abnormalTestIndsSelected)),np.ones(len(normalTestIndsSelected))])
+					# reshape & concat
+					test_x = np.reshape(myData.test.images[normalTestIndsSelected],(len(normalTestIndsSelected),imgSize,imgSize,1))
+					test_x_fake = np.reshape(myData.test.images[abnormalTestIndsSelected],(len(abnormalTestIndsSelected),imgSize,imgSize,1))
+					test_x = np.vstack([test_x_fake, test_x])
+
+					# make test label data
+					test_y = np.hstack([np.ones(len(abnormalTestIndsSelected)),np.zeros(len(normalTestIndsSelected))])
+					test_y_inv = np.hstack([np.zeros(len(abnormalTestIndsSelected)),np.ones(len(normalTestIndsSelected))])
 
 			elif dataMode == UCSD2:
 				#test_x = test_x_all[ind]/255.0
@@ -947,19 +955,17 @@ while not isStop:
 				test_y_inv = 1-test_y_all[ind]
 
 
-			test_x_noise = test_x + np.random.normal(0,noiseSigma,test_x.shape)
-
 			#--------------------------
 			if trainMode == ALOCC:
-				predictDX_value[ind], predictDRX_value[ind], decoderR_test_value[ind], encoderR_test_value[ind] = sess.run(
-								[predictDX, predictDRX, decoderR_test, encoderR_test],
-								feed_dict={xTest: test_x, xTestNoise: test_x})
+				predictDX_value[ind], predictDRX_value[ind], decoderR_test_value[ind], encoderR_test_value[ind], xTest_DNet_grad_value = sess.run(
+								[predictDX, predictDRX, decoderR_test, encoderR_test, xTest_DNet_grad],
+								feed_dict={xTest: test_x})
 								
 			elif trainMode == GAN:
 				predictDX_value[ind], predictDRX_value[ind], decoderR_test_value[ind], encoderR_test_value[ind] = sess.run(
 								[predictDX, predictDRX, decoderR_test, encoderR_test],
-								feed_dict={xTest: test_x, xTestNoise: test_x})
-								
+								feed_dict={xTest: test_x})
+				
 				# difference between original and recovered data
 				dataSize = np.prod(test_x.shape[1:])
 				predictGX_value[ind] = np.sum(np.abs(np.reshape(test_x,[-1,dataSize]) - np.reshape(decoderR_test_value[ind],[-1,dataSize])),axis=1)
@@ -967,12 +973,11 @@ while not isStop:
 
 								
 			elif trainMode == TRIPLE:
-				predictDX_value[ind], predictDRX_value[ind], decoderR_test_value[ind], encoderR_test_value[ind] = sess.run(
-								[predictDX, predictDRX, decoderR_test, encoderR_test],
-								feed_dict={xTest: test_x, xTestNoise: test_x_noise})
+				predictDX_value[ind], predictDRX_value[ind], decoderR_test_value[ind], encoderR_test_value[ind],  xTest_DNet_grad_value, xTest_CNet_grad_value = sess.run(
+								[predictDX, predictDRX, decoderR_test, encoderR_test, xTest_DNet_grad, xTest_CNet_grad],
+								feed_dict={xTest: test_x})
 
-				predictCX_value[ind], predictCRX_value[ind] = sess.run([predictCX, predictCRX], feed_dict={xTest: test_x, xTestNoise: test_x_noise})
-
+				predictCX_value[ind], predictCRX_value[ind] = sess.run([predictCX, predictCRX], feed_dict={xTest: test_x})
 			#--------------------------
 
 			if dataMode == MNIST:
@@ -1011,7 +1016,6 @@ while not isStop:
 			recallDX, precisionDX, f1DX, aucDX, eerDX = calcEval(1-predictDX_value_tmp, test_y, threAbnormal)
 			recallDRX, precisionDRX, f1DRX, aucDRX, eerDRX = calcEval(1-predictDRX_value_tmp, test_y, threAbnormal)
 
-
 			recallDX_inv, precisionDX_inv, f1DX_inv, aucDX_inv, eerDX_inv = calcEval(predictDX_value_tmp, test_y_inv, threAbnormal)
 			recallDRX_inv, precisionDRX_inv, f1DRX_inv, aucDRX_inv, eerDRX_inv = calcEval(predictDRX_value_tmp, test_y_inv, threAbnormal)
 
@@ -1039,7 +1043,6 @@ while not isStop:
 				precisionGXs[ind].append(precisionGX)
 				f1GXs[ind].append(f1GX)
 				aucGXs[ind].append(aucGX)
-				eerGXs[ind].append(eeGX)
 			#--------------------------
 
 			#--------------------------
@@ -1099,29 +1102,53 @@ while not isStop:
 					fig2.axes.get_xaxis().set_ticks([])
 					fig2.axes.get_yaxis().set_ticks([])					
 
-				path = os.path.join(visualPath,"img_train{}_{}_{}.eps".format(postFix,testAbnormalRatio,ite))
+				path = os.path.join(visualPath,"img_train{}_{}_{}.png".format(postFix,testAbnormalRatio,ite))
 				plt.savefig(path)
 				#--------------------------
 
 				#--------------------------
 				# 提案法で生成した画像（元の画像、提案法で生成たい異常画像）を保存
 				if isEmbedSampling & (trainMode == TRIPLE):
-					path = os.path.join(visualPath,"img_train_aug{}_{}_{}.eps".format(postFix,testAbnormalRatio,ite))
+					path = os.path.join(visualPath,"img_train_aug{}_{}_{}.png".format(postFix,testAbnormalRatio,ite))
 					plotImg(batch_x[:nPlotImg], decoderR_train_abnormal_value[:nPlotImg],path)
 				#--------------------------
 							
 				#--------------------------
 				# 評価画像のうち正常のものを保存
-				path = os.path.join(visualPath,"img_test_true{}_{}_{}.eps".format(postFix,testAbnormalRatio,ite))
+				path = os.path.join(visualPath,"img_test_true{}_{}_{}.png".format(postFix,testAbnormalRatio,ite))
 				plotImg(test_x[-nPlotImg:], decoderR_test_value[ind][-nPlotImg:],path)
 				#--------------------------
 		
 				#--------------------------
 				# 評価画像のうち異常のものを保存
-				path = os.path.join(visualPath,"img_test_fake{}_{}_{}.eps".format(postFix,testAbnormalRatio,ite))
+				path = os.path.join(visualPath,"img_test_fake{}_{}_{}.png".format(postFix,testAbnormalRatio,ite))
 				plotImg(test_x[:nPlotImg], decoderR_test_value[ind][:nPlotImg],path)
 				#--------------------------
-		
+
+				#--------------------------
+				# gradient
+				path = os.path.join(visualPath,"img_test_true_grad{}_{}_{}.png".format(postFix,testAbnormalRatio,ite))
+				plotImg(test_x[-nPlotImg:], xTest_DNet_grad_value[0][-nPlotImg:],path)
+
+				path = os.path.join(visualPath,"img_test_fake_grad{}_{}_{}.png".format(postFix,testAbnormalRatio,ite))
+				plotImg(test_x[:nPlotImg], xTest_DNet_grad_value[0][:nPlotImg],path)				
+				#--------------------------
+
+				if trainMode==TRIPLE:
+					#--------------------------
+					# gradient
+					path = os.path.join(visualPath,"img_test_true_grad_CNet{}_{}_{}.png".format(postFix,testAbnormalRatio,ite))
+					plotImg(test_x[-nPlotImg:], xTest_CNet_grad_value[0][-nPlotImg:],path)
+
+					path = os.path.join(visualPath,"img_test_fake_grad_CNet{}_{}_{}.png".format(postFix,testAbnormalRatio,ite))
+					plotImg(test_x[:nPlotImg], xTest_CNet_grad_value[0][:nPlotImg],path)
+					#--------------------------
+
+				if trainMode==ALOCC:
+					#-------------
+					path = os.path.join(visualPath,"img_train_grad{}_{}.png".format(postFix,ite))
+					plotImg(batch_x[:nPlotImg], xTrain_lossD_grad_value[0][:nPlotImg],path)
+					#-------------		
 			#--------------------------
 		#====================
 
@@ -1134,7 +1161,7 @@ while not isStop:
 
 			plt.plot(predictCX_value_all)
 			plt.plot(test_y_all_1D)
-			plt.savefig(visualPath+"score_{}_{}.eps".format(postFix,ite))
+			plt.savefig(visualPath+"score_{}_{}.png".format(postFix,ite))
 
 		#=======================
 		# チェックポイントの保存

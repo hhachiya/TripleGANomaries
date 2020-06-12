@@ -27,26 +27,30 @@ trainMode = int(sys.argv[1])
 
 if trainMode == ALOCC:
 	noiseSigma = float(sys.argv[2])
-	channelSize = int(sys.argv[3])
+	z_dim = int(sys.argv[3])
 	stopTrainThre = float(sys.argv[4])
 	isDNetStop = int(sys.argv[5])
+	alpha = float(sys.argv[6])
 elif trainMode == GAN:
 	noiseSigma = float(sys.argv[2])
-	channelSize = int(sys.argv[3])
+	z_dim = int(sys.argv[3])
+	alpha = float(sys.argv[4])
 elif trainMode == TRIPLE:
 	noiseSigma = float(sys.argv[2])
-	channelSize = int(sys.argv[3])
+	z_dim = int(sys.argv[3])
 	stopTrainThre = float(sys.argv[4])
 	beta = float(sys.argv[5])
-	isRandMag = int(sys.argv[6])
+	alpha = float(sys.argv[6])
 
 # trial numbers
-#trialNos = [0,1,2]
-trialNos = [0,1]
+#trialNos = [0,1]
+trialNos = [0]
+
 
 # Iteration
 nIte = 4000
-resInd = int((nIte-1)/2000)
+#resInd = int((nIte-1)/2000)
+resInd = 0
 #-------------
 
 #-------------
@@ -68,10 +72,7 @@ if trainMode == ALOCC:
 elif trainMode == GAN:
 	postFixStr = 'GAN'
 elif trainMode == TRIPLE:
-	if isRandMag:
-		postFixStr = 'TRIPLE_RandMag'
-	else:
-		postFixStr = 'TRIPLE'
+	postFixStr = 'TRIPLE'
 #-------------
 
 #===========================
@@ -189,11 +190,11 @@ for targetChar in targetChars:
 	for trialNo in trialNos:
 		# ファイル名のpostFix
 		if trainMode == ALOCC:
-			postFix = "_{}_{}_{}_{}_{}".format(postFixStr, targetChar, trialNo, noiseSigma, stopTrainThre)
+			postFix = "_{}_{}_{}_{}_{}_{}_{}".format(postFixStr, targetChar, trialNo, z_dim, alpha, noiseSigma, stopTrainThre)
 		elif trainMode == GAN:
-			postFix = "_{}_{}_{}_{}".format(postFixStr, targetChar, trialNo, noiseSigma)
+			postFix = "_{}_{}_{}_{}_{}_{}".format(postFixStr, targetChar, trialNo, z_dim, alpha, noiseSigma)
 		elif trainMode == TRIPLE:
-			postFix = "_{}_{}_{}_{}_{}_{}".format(postFixStr, targetChar, trialNo, noiseSigma, stopTrainThre, beta)
+			postFix = "_{}_{}_{}_{}_{}_{}_{}_{}".format(postFixStr, targetChar, trialNo, z_dim, alpha, noiseSigma, stopTrainThre, beta)
 
 
 		#--------------
