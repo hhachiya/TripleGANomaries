@@ -105,6 +105,8 @@ def loadParams(path):
 		aucDRXs_inv = pickle.load(fp)
 
 		if trainMode == TRIPLE:
+			predictCXs = pickle.load(fp)
+			predictCRXs = pickle.load(fp)			
 			recallCXs = pickle.load(fp)
 			precisionCXs = pickle.load(fp)
 			f1CXs = pickle.load(fp)

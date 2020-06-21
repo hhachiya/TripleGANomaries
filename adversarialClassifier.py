@@ -174,7 +174,7 @@ def calcEval(predict, gt, threAbnormal=0.5):
 
 	recall = np.sum(tmp_predict[gt==1])/np.sum(gt==1)
 	precision = np.sum(tmp_predict[gt==1])/(np.sum(tmp_predict==1)+lambdaSmall)
-	f1 = 2 * (precision * recall)/(precision + recall)
+	f1 = 2 * (precision * recall)/(precision + recall+lambdaSmall)
 
 	return recall, precision, f1, auc, eer
 #######################
