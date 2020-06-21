@@ -45,7 +45,7 @@ elif dataMode == UCSD2:
 	batchSize = 200
 	stride = 1
 
-mmdDataNum = 200
+mmdDataNum = 500
 evalInterval = 1000
 printInterval = 100
 
@@ -173,7 +173,7 @@ def calcEval(predict, gt, threAbnormal=0.5):
 	tmp_predict[predict < threAbnormal] = 0.
 
 	recall = np.sum(tmp_predict[gt==1])/np.sum(gt==1)
-	precision = np.sum(tmp_predict[gt==1])/np.sum(tmp_predict==1)
+	precision = np.sum(tmp_predict[gt==1])/(np.sum(tmp_predict==1)+lambdaSmall)
 	f1 = 2 * (precision * recall)/(precision + recall)
 
 	return recall, precision, f1, auc, eer
@@ -1199,6 +1199,8 @@ if dataMode==MNIST:
 		pickle.dump(aucDRXs_inv,fp)
 
 		if trainMode == TRIPLE:
+			pickle.dump(predictCX_value,fp)
+			pickle.dump(predictCRX_value,fp)			
 			pickle.dump(recallCXs,fp)
 			pickle.dump(precisionCXs,fp)
 			pickle.dump(f1CXs,fp)

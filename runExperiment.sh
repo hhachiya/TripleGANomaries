@@ -9,7 +9,7 @@ for ((tri=0; tri<2; tri++)); do
 						python adversarialClassifier.py 2 $char $tri 0 $zDim 5000 $stopTrainThre $beta $alpha					
 					done
 					
-					python adversarialClassifier.py 0 $char $tri 0.155 $zDim 5000 $stopTrainThre 1 $alpha					
+					#python adversarialClassifier.py 0 $char $tri 0.155 $zDim 5000 $stopTrainThre 1 $alpha					
 				done
 			done
 		done
